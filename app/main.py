@@ -85,6 +85,16 @@ class DeepReport(BaseModel):
     report: AIReport
 
 
+@app.get("/")
+def root() -> dict:
+    return {
+        "name": "TrustLens API",
+        "status": "ok",
+        "message": "The backend is running. This is an API, not a website.",
+        "try": {"health": "/health", "interactive_docs": "/docs"},
+    }
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "engine": "slither", "ai_model": ai.MODEL}
