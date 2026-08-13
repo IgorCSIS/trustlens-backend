@@ -48,19 +48,36 @@ else:
         allow_methods=["*"], allow_headers=["*"],
     )
 
-# --- Simple per-IP rate limit (protects the free, CPU-heavy scan) ------------
-_RL_MAX = int(os.getenv("SCAN_RATE_MAX", "20"))   # requests
-_RL_WINDOW = int(os.getenv("SCAN_RATE_WINDOW", "60"))  # seconds
-_hits: dict[str, list[float]] = defaultdict(list)
+# Free-beta mode: AI reports are free (no on-chain payment), just rate-limited.
+# Set FREE_BETA=0 to require payment (once the payment contract is on mainnet + audited).
+FREE_BETA = os.getenv("FREE_BETA", "1") == "1"
 
 
-def rate_limit(request: Request) -> None:
-    ip = request.client.host if request.client else "unknown"
-    now = time.time()
-    _hits[ip] = [t for t in _hits[ip] if t > now - _RL_WINDOW]
-    if len(_hits[ip]) >= _RL_MAX:
-        raise HTTPException(status_code=429, detail="Too many scans, give it a moment.")
-    _hits[ip].append(now)
+# --- Simple per-IP rate limiters --------------------------------------------
+def _make_limiter(max_n: int, window: int, msg: str):
+    hits: dict[str, list[float]] = defaultdict(list)
+
+    def dep(request: Request) -> None:
+        ip = request.client.host if request.client else "unknown"
+        now = time.time()
+        hits[ip] = [t for t in hits[ip] if t > now - window]
+        if len(hits[ip]) >= max_n:
+            raise HTTPException(status_code=429, detail=msg)
+        hits[ip].append(now)
+
+    return dep
+
+
+# free scan: protect the CPU-heavy endpoint (per minute)
+rate_limit = _make_limiter(
+    int(os.getenv("SCAN_RATE_MAX", "20")), int(os.getenv("SCAN_RATE_WINDOW", "60")),
+    "Too many scans, give it a moment.",
+)
+# AI report: daily per-IP cap so free-beta spend can't run away
+ai_rate_limit = _make_limiter(
+    int(os.getenv("AI_RATE_MAX", "8")), int(os.getenv("AI_RATE_WINDOW", "86400")),
+    "You've hit today's free deep-report limit. Try again tomorrow, or scan away for free.",
+)
 
 
 class DeepReport(BaseModel):
@@ -96,20 +113,20 @@ def scan_address(req: AddressScanRequest) -> ScanResult:
 # M2 + M3 — static analysis + AI triage (PAID "deep scan")
 # --------------------------------------------------------------------------
 
-@app.post("/report/address", response_model=DeepReport, dependencies=[Depends(rate_limit)])
+@app.post("/report/address", response_model=DeepReport, dependencies=[Depends(ai_rate_limit)])
 def report_address(req: ReportRequest) -> DeepReport:
-    """PAID tier — authorize with a per-scan payment OR an active monthly pass."""
-    try:
-        if req.pass_signature and req.pass_message:
-            # monthly-pass holder: verify signature + on-chain pass
-            payments.verify_pass(req.address, req.pass_message, req.pass_signature, req.chain)
-        elif req.tx_hash and req.payment_id:
-            # pay-per-scan: verify the on-chain payment (single-use)
-            payments.verify_and_consume(req.tx_hash, req.address, req.payment_id, req.chain)
-        else:
-            raise payments.PaymentError("no payment or pass proof provided")
-    except payments.PaymentError as exc:
-        raise HTTPException(status_code=402, detail=str(exc)) from exc  # 402 Payment Required
+    """AI deep report. Free during beta (rate-limited); paid once FREE_BETA=0."""
+    if not FREE_BETA:
+        # authorize with a per-scan payment OR an active monthly pass
+        try:
+            if req.pass_signature and req.pass_message:
+                payments.verify_pass(req.address, req.pass_message, req.pass_signature, req.chain)
+            elif req.tx_hash and req.payment_id:
+                payments.verify_and_consume(req.tx_hash, req.address, req.payment_id, req.chain)
+            else:
+                raise payments.PaymentError("no payment or pass proof provided")
+        except payments.PaymentError as exc:
+            raise HTTPException(status_code=402, detail=str(exc)) from exc  # 402 Payment Required
 
     scan, source = _scan_address_core(req.address, req.chain)
     return DeepReport(scan=scan, report=_triage(scan, source))

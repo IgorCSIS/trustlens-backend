@@ -10,10 +10,13 @@ easiest. It needs outbound internet (Basescan, Base RPC, Anthropic) and about
 | Var | Required | Notes |
 |-----|----------|-------|
 | `ANTHROPIC_API_KEY` | yes | for the AI report |
-| `BASESCAN_API_KEY` | yes | fetch verified source (Etherscan V2 key) |
+| `BASESCAN_API_KEY` | yes | fetch verified source (Etherscan V2 key, works for Base mainnet) |
 | `ALLOWED_ORIGINS` | yes (prod) | your frontend origin, e.g. `https://trustlens.vercel.app` (comma-separated for several) |
+| `FREE_BETA` | no | `1` (default) = AI reports free + rate-limited. Set `0` to require on-chain payment. |
+| `AI_RATE_MAX` | no | free AI reports per IP per window (default 8) — your Claude-spend cap |
+| `AI_RATE_WINDOW` | no | AI report window seconds (default 86400 = 1 day) |
 | `SCAN_RATE_MAX` | no | free scans per IP per window (default 20) |
-| `SCAN_RATE_WINDOW` | no | rate window seconds (default 60) |
+| `SCAN_RATE_WINDOW` | no | scan window seconds (default 60) |
 | `PORT` | auto | injected by the host |
 
 **Never** set `ALLOW_LOCAL_REPORT` in production (it exposes an ungated AI endpoint).
