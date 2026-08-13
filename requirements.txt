@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+slither-analyzer
+solc-select
+requests
+python-dotenv
+pydantic
+anthropic

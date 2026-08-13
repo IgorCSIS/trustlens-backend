@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data
+payments.db
+*.db
+
+# Editor / OS
+.DS_Store
+.vscode/
