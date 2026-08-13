@@ -1,0 +1,23 @@
+# Render Blueprint — deploy the TrustLens backend in a few clicks.
+# In Render: New + > Blueprint > pick the trustlens-backend repo. Render reads
+# this file, builds the Dockerfile, and asks you to fill the secret env vars.
+services:
+  - type: web
+    name: trustlens-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free          # bump to "starter" if scans OOM on the 512MB free tier
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: FREE_BETA
+        value: "1"       # AI reports free + rate-limited during beta
+      - key: AI_RATE_MAX
+        value: "8"       # free AI reports per IP per day (your Claude-spend cap)
+      # Secrets — set these in the Render dashboard (never commit them):
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: BASESCAN_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false      # set to your Vercel URL once the frontend is deployed
