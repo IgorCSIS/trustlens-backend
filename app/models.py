@@ -12,6 +12,22 @@ class Finding(BaseModel):
     lines: list[int] = Field(default_factory=list)
 
 
+class ProxyInfo(BaseModel):
+    """Set when the scanned address is a proxy. Lets the report show BOTH the
+    address the user entered and the implementation that was actually analyzed."""
+    is_proxy: bool = False
+    proxy_type: str = ""              # eip1967 | eip1967-beacon | zeppelinos
+    proxy_address: str = ""           # the address the user entered
+    implementation_address: str | None = None
+    scanned_address: str = ""         # the address Slither actually ran on
+    implementation_scanned: bool = False  # True only if impl source was fetched + scanned
+    admin: str | None = None          # who can upgrade (from the admin slot)
+    admin_is_contract: bool | None = None  # True=likely multisig/timelock, False=EOA
+    beacon: str | None = None
+    state_read_ok: bool = True        # False if the on-chain proxy read failed
+    note: str = ""                    # status / degradation message for the UI
+
+
 class ScanResult(BaseModel):
     target: str = Field(..., description="Address or filename that was scanned")
     engine: str = "slither"
@@ -19,6 +35,7 @@ class ScanResult(BaseModel):
     verdict: str = Field(..., description="human label derived from risk_score")
     summary: dict[str, int] = Field(default_factory=dict, description="counts by impact")
     findings: list[Finding] = Field(default_factory=list)
+    proxy: ProxyInfo | None = None    # populated only for proxy contracts
 
 
 class LocalScanRequest(BaseModel):

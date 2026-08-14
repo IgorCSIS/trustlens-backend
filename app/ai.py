@@ -113,9 +113,26 @@ def triage(scan: ScanResult, source: str, max_source_chars: int = 24_000) -> AIR
     src = source[:max_source_chars]
     truncated = " (truncated)" if len(source) > max_source_chars else ""
 
+    proxy_ctx = ""
+    p = getattr(scan, "proxy", None)
+    if p and p.is_proxy:
+        proxy_ctx = (
+            f"\nPROXY CONTEXT: {scan.target} is a {p.proxy_type or 'proxy'} contract. The source below "
+            f"is its current implementation at {p.implementation_address}, which an admin can replace, "
+            f"so the deployed behavior can change after this scan. Reflect the upgradeability and the "
+            f"admin/centralization risk in the headline and limitations. {p.note}\n"
+        )
+    elif p and not p.state_read_ok:
+        proxy_ctx = (
+            f"\nPROXY CONTEXT: on-chain proxy state for {scan.target} could not be read ({p.note}), "
+            f"so we cannot confirm the source below is the code that actually runs. Note this as a "
+            f"prominent limitation.\n"
+        )
+
     user = (
         f"Contract: {scan.target}\n"
-        f"Static-analysis verdict: {scan.verdict} (raw score {scan.risk_score}/100)\n\n"
+        f"Static-analysis verdict: {scan.verdict} (raw score {scan.risk_score}/100)\n"
+        f"{proxy_ctx}\n"
         f"FINDINGS:\n{findings_block}\n\n"
         f"SOURCE{truncated}:\n```solidity\n{src}\n```\n\n"
         "Produce the triaged report."

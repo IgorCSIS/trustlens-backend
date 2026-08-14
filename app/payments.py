@@ -23,12 +23,9 @@ from eth_account.messages import encode_defunct
 from web3 import Web3
 from web3.logs import DISCARD
 
-PAYMENT_GATE = Web3.to_checksum_address("0x93F37c9af6b4dB4c51DD3CD1a742a4D9AdC878Ca")
+from . import rpc
 
-_RPCS = {
-    "base-sepolia": "https://sepolia.base.org",
-    "base": "https://mainnet.base.org",
-}
+PAYMENT_GATE = Web3.to_checksum_address("0x93F37c9af6b4dB4c51DD3CD1a742a4D9AdC878Ca")
 
 _EVENT_ABI = [
     {
@@ -64,10 +61,10 @@ class PaymentError(Exception):
 
 
 def _w3(chain: str) -> Web3:
-    rpc = _RPCS.get(chain)
-    if not rpc:
-        raise PaymentError(f"unsupported chain '{chain}'")
-    return Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 20}))
+    try:
+        return rpc.w3(chain)
+    except rpc.UnsupportedChain as exc:
+        raise PaymentError(str(exc)) from exc
 
 
 def find_payment(tx_hash: str, target: str, payment_id: str, chain: str) -> dict:
