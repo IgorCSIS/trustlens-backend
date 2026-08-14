@@ -18,8 +18,20 @@ from pydantic import BaseModel, Field
 
 from .models import ScanResult
 
-# Default to Claude Opus 5; override via env for cost tuning (e.g. claude-sonnet-5).
-MODEL = os.getenv("TRUSTLENS_MODEL", "claude-opus-5")
+# Default to Claude Sonnet (structured triage does not need Opus, and this cuts
+# per-scan cost several-fold on a solo-founder budget). Override via env, e.g.
+# TRUSTLENS_MODEL=claude-opus-5 for the hardest contracts.
+MODEL = os.getenv("TRUSTLENS_MODEL", "claude-sonnet-5")
+
+# Attached server-side to every report so no result is ever a naked verdict. A
+# safety tool that says "safe" without limits is a liability; this makes the
+# scope unavoidable regardless of what the model returns.
+DISCLAIMER = (
+    "Automated triage using static analysis and AI review. This is not a "
+    "professional security audit. It cannot detect every vulnerability, cannot "
+    "evaluate off-chain, economic, or governance risk, and cannot guarantee a "
+    "contract is safe. Do not make financial decisions based on this report alone."
+)
 
 _SYSTEM = (
     "You are a senior smart-contract security auditor. You are given automated "
@@ -30,6 +42,17 @@ _SYSTEM = (
     "Be honest and calibrated: most static-analysis findings on competently "
     "written contracts are low severity, and saying so is the correct answer. "
     "Never invent findings that were not provided to you. Judge only this contract.\n\n"
+    "CRITICAL FRAMING: never GUARANTEE that a contract is safe, secure, or "
+    "audited. You are reducing false alarms and surfacing real risk, not clearing "
+    "a contract. The lowest-risk verdict is 'SAFE-ISH', which means low concern "
+    "with caveats, never a guarantee. The headline reports what you found and what "
+    "you could not check, never a promise of safety. Static analysis cannot see "
+    "off-chain or economic risk, upgrade/admin powers beyond what the source "
+    "shows, or anything in unverified code.\n\n"
+    "Populate 'limitations' with 3-6 short, concrete things THIS analysis did not "
+    "or could not check (e.g. off-chain oracle manipulation, tokenomics/economic "
+    "rug design, admin-key trust, upgradeability, anything not in the provided "
+    "source). This is mandatory.\n\n"
     "For any finding that is REAL (verdict critical / worth-fixing / minor — i.e. "
     "NOT a false positive), you must also produce three developer artifacts, all "
     "grounded in THIS contract's actual code:\n"
@@ -69,10 +92,15 @@ class TriagedFinding(BaseModel):
 
 
 class AIReport(BaseModel):
-    headline: str = Field(..., description="one-sentence bottom line for the user")
+    headline: str = Field(..., description="one-sentence bottom line; reports what was found, never a guarantee of safety")
     adjusted_risk: int = Field(..., ge=0, le=100, description="human-calibrated 0..100 risk")
-    verdict: str = Field(..., description="SAFE-ISH | CAUTION | RISKY | DANGEROUS")
+    verdict: str = Field(..., description="SAFE-ISH | CAUTION | RISKY | DANGEROUS (SAFE-ISH = low concern with caveats, never a guarantee)")
+    limitations: list[str] = Field(
+        default_factory=list,
+        description="what this analysis did NOT or could not check (mandatory, 3-6 items)",
+    )
     triaged: list[TriagedFinding] = Field(default_factory=list)
+    disclaimer: str = Field(default="", description="set server-side; scope + not-an-audit notice")
 
 
 def triage(scan: ScanResult, source: str, max_source_chars: int = 24_000) -> AIReport:
@@ -96,12 +124,17 @@ def triage(scan: ScanResult, source: str, max_source_chars: int = 24_000) -> AIR
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY / ant profile
     # thinking disabled keeps latency + cost predictable for a per-scan product and
     # avoids max_tokens contention; structured output is guaranteed to match AIReport.
+    # System prompt is marked cacheable so it is not re-billed on every scan.
     response = client.messages.parse(
         model=MODEL,
         max_tokens=12000,  # room for exploit sketches + fix snippets
         thinking={"type": "disabled"},
-        system=_SYSTEM,
+        system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user}],
         output_format=AIReport,
     )
-    return response.parsed_output
+    report = response.parsed_output
+    # Attach the scope notice server-side so every report carries it, regardless
+    # of what the model returned. Never ship a naked verdict.
+    report.disclaimer = DISCLAIMER
+    return report

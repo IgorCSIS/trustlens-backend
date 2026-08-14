@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import threading
 import time
 from collections import defaultdict
 
@@ -80,6 +81,68 @@ ai_rate_limit = _make_limiter(
 )
 
 
+# --- Result cache -----------------------------------------------------------
+# Scans are effectively deterministic for a given verified source, so cache by
+# (chain, address): cuts Claude spend, kills repeat-scan latency, relieves the
+# Basescan key, and lets a viral spike hit the cache instead of the model.
+# In-process TTL cache; swap for Redis once there's more than one instance.
+_CACHE_TTL = int(os.getenv("CACHE_TTL", "86400"))  # 24h; verified source rarely changes
+_scan_cache: dict[str, tuple[float, ScanResult]] = {}
+_report_cache: dict[str, tuple[float, "DeepReport"]] = {}
+_cache_lock = threading.Lock()
+
+
+def _cache_key(address: str, chain: str) -> str:
+    return f"{chain.lower()}:{address.lower()}"
+
+
+def _cache_get(store: dict, key: str):
+    with _cache_lock:
+        hit = store.get(key)
+        if hit is None:
+            return None
+        ts, val = hit
+        if time.time() - ts > _CACHE_TTL:
+            store.pop(key, None)
+            return None
+        return val
+
+
+def _cache_put(store: dict, key: str, val) -> None:
+    with _cache_lock:
+        store[key] = (time.time(), val)
+
+
+# --- Global AI spend cap (fails closed) -------------------------------------
+# The per-IP limiter is bypassable by rotating IPs, so it is not a real ceiling
+# on Claude spend. This global daily counter is: once the day's budget is spent,
+# we stop calling the model instead of running up the bill. Reserved before the
+# call and refunded if the call fails, so errors don't burn budget.
+_AI_GLOBAL_DAILY_MAX = int(os.getenv("AI_GLOBAL_DAILY_MAX", "200"))
+_ai_spend_lock = threading.Lock()
+_ai_spend = {"day": "", "count": 0}
+
+
+def _ai_budget_reserve() -> None:
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    with _ai_spend_lock:
+        if _ai_spend["day"] != today:
+            _ai_spend["day"], _ai_spend["count"] = today, 0
+        if _ai_spend["count"] >= _AI_GLOBAL_DAILY_MAX:
+            raise HTTPException(
+                status_code=503,
+                detail="TrustLens has hit today's free-beta deep-report capacity. "
+                "Try again tomorrow, or keep using the free scan.",
+            )
+        _ai_spend["count"] += 1
+
+
+def _ai_budget_refund() -> None:
+    with _ai_spend_lock:
+        if _ai_spend["count"] > 0:
+            _ai_spend["count"] -= 1
+
+
 class DeepReport(BaseModel):
     scan: ScanResult
     report: AIReport
@@ -104,8 +167,9 @@ def health() -> dict:
 # M2 — static analysis only (free tier)
 # --------------------------------------------------------------------------
 
-@app.post("/scan/local", response_model=ScanResult)
+@app.post("/scan/local", response_model=ScanResult, dependencies=[Depends(rate_limit)])
 def scan_local(req: LocalScanRequest) -> ScanResult:
+    """FREE tier on pasted source. Rate-limited: it runs Slither (CPU-heavy)."""
     try:
         return analyzer.analyze_source(req.source, filename=req.filename)
     except Exception as exc:  # noqa: BLE001 - surface engine errors to caller
@@ -115,7 +179,12 @@ def scan_local(req: LocalScanRequest) -> ScanResult:
 @app.post("/scan/address", response_model=ScanResult, dependencies=[Depends(rate_limit)])
 def scan_address(req: AddressScanRequest) -> ScanResult:
     """FREE tier — rule-based findings only, no payment, no AI cost."""
+    key = _cache_key(req.address, req.chain)
+    cached = _cache_get(_scan_cache, key)
+    if cached is not None:
+        return cached
     scan, _ = _scan_address_core(req.address, req.chain)
+    _cache_put(_scan_cache, key, scan)
     return scan
 
 
@@ -138,8 +207,25 @@ def report_address(req: ReportRequest) -> DeepReport:
         except payments.PaymentError as exc:
             raise HTTPException(status_code=402, detail=str(exc)) from exc  # 402 Payment Required
 
-    scan, source = _scan_address_core(req.address, req.chain)
-    return DeepReport(scan=scan, report=_triage(scan, source))
+    # Payment/pass is verified above per caller; the cache only saves the compute.
+    key = _cache_key(req.address, req.chain)
+    cached = _cache_get(_report_cache, key)
+    if cached is not None:
+        return cached
+
+    # Cache miss = a real Claude call. Reserve global budget first (fail closed),
+    # refund if the scan or triage errors so failures don't burn the day's cap.
+    _ai_budget_reserve()
+    try:
+        scan, source = _scan_address_core(req.address, req.chain)
+        report = DeepReport(scan=scan, report=_triage(scan, source))
+    except Exception:
+        _ai_budget_refund()
+        raise
+
+    _cache_put(_report_cache, key, report)
+    _cache_put(_scan_cache, key, scan)  # warm the free-scan cache too
+    return report
 
 
 @app.post("/report/local", response_model=DeepReport)

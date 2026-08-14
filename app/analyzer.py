@@ -12,8 +12,19 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 
 from .models import Finding, ScanResult
+
+# Slither runs a compiler on attacker-supplied Solidity, and each run is CPU- and
+# memory-heavy. On a small single instance, two concurrent runs OOM the box, and
+# solc-select's "use" mutates global process state so concurrent runs on
+# different pragmas race. A semaphore bounds concurrency (default 1, the safe
+# choice on a 512MB tier) and a wall-clock timeout stops a crafted contract from
+# hanging the compiler forever. Tune via env once hosting has real headroom.
+_SLITHER_MAX = max(1, int(os.getenv("SLITHER_MAX_CONCURRENCY", "1")))
+_SLITHER_SEM = threading.Semaphore(_SLITHER_MAX)
+_SLITHER_TIMEOUT = int(os.getenv("SLITHER_TIMEOUT", "150"))
 
 # Weight each Slither impact level toward an overall 0..100 risk score.
 _IMPACT_WEIGHT = {
@@ -100,13 +111,13 @@ def _normalize(raw: dict, target: str) -> ScanResult:
 def analyze_source(source: str, filename: str = "Contract.sol") -> ScanResult:
     """Run Slither on a single Solidity source string; return a ScanResult."""
     version = _detect_pragma(source)
-    _ensure_solc(version)
-
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, filename)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(source)
-        return analyze_path(path, target=filename)
+        # pass solc_version so the solc-select + Slither run happens inside the
+        # concurrency guard in analyze_path (avoids racing on solc-select state).
+        return analyze_path(path, target=filename, solc_version=version)
 
 
 def analyze_path(
@@ -132,9 +143,6 @@ def analyze_path(
     :param filter_paths: comma-separated path fragments to exclude from findings
                          (e.g. "lib" to skip audited dependencies)
     """
-    if solc_version:
-        _ensure_solc(solc_version)
-
     abspath = os.path.abspath(sol_path)
     target = target or os.path.basename(abspath)
 
@@ -156,9 +164,22 @@ def analyze_path(
         if filter_paths:
             cmd += ["--filter-paths", filter_paths]
 
-        proc = subprocess.run(
-            cmd, cwd=work_dir, capture_output=True, text=True, check=False
-        )
+        # Serialize the heavy, stateful part (solc-select mutates global state +
+        # Slither is CPU/memory-bound) behind the concurrency guard, and cap the
+        # wall-clock so a crafted contract can't hang or OOM the instance.
+        with _SLITHER_SEM:
+            if solc_version:
+                _ensure_solc(solc_version)
+            try:
+                proc = subprocess.run(
+                    cmd, cwd=work_dir, capture_output=True, text=True,
+                    check=False, timeout=_SLITHER_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(
+                    f"Slither timed out after {_SLITHER_TIMEOUT}s "
+                    "(contract too large or pathological)."
+                ) from exc
 
         if not os.path.exists(json_out):
             raise RuntimeError(
