@@ -3,7 +3,7 @@ AI reasoning layer (M3).
 
 Takes the raw Slither findings from M2 plus the contract source, and asks Claude
 to triage them: which findings are real and exploitable, which are noise, in
-plain English a non-expert can act on. This is the TrustLens differentiator —
+plain English a non-expert can act on. This is the TrustLens differentiator:
 rule-based scanners stop at M2; we explain and rank.
 
 Server-side only: the Anthropic API key lives in the backend .env, never on the
@@ -42,6 +42,8 @@ _SYSTEM = (
     "Be honest and calibrated: most static-analysis findings on competently "
     "written contracts are low severity, and saying so is the correct answer. "
     "Never invent findings that were not provided to you. Judge only this contract.\n\n"
+    "STYLE: write plain prose. Never use em-dashes or en-dashes anywhere in your "
+    "output; use commas, periods, or parentheses instead.\n\n"
     "CRITICAL FRAMING: never GUARANTEE that a contract is safe, secure, or "
     "audited. You are reducing false alarms and surfacing real risk, not clearing "
     "a contract. The lowest-risk verdict is 'SAFE-ISH', which means low concern "
@@ -53,17 +55,17 @@ _SYSTEM = (
     "or could not check (e.g. off-chain oracle manipulation, tokenomics/economic "
     "rug design, admin-key trust, upgradeability, anything not in the provided "
     "source). This is mandatory.\n\n"
-    "For any finding that is REAL (verdict critical / worth-fixing / minor — i.e. "
+    "For any finding that is REAL (verdict critical / worth-fixing / minor, i.e. "
     "NOT a false positive), you must also produce three developer artifacts, all "
     "grounded in THIS contract's actual code:\n"
     "  - exploit_sketch: 2-4 sentences describing concretely how the issue is "
-    "abused or goes wrong — a specific scenario with the actor and the outcome, "
+    "abused or goes wrong, a specific scenario with the actor and the outcome, "
     "not a generic definition. Make it credible and specific to this code.\n"
     "  - vulnerable_snippet: the exact offending Solidity line(s) copied from the "
     "source (a few lines max, enough to locate it).\n"
     "  - fixed_snippet: a drop-in corrected version of those same line(s) the dev "
     "can paste in to fix it. Keep it minimal and directly pasteable.\n"
-    "For FALSE POSITIVES, set all three of these to an empty string \"\" — do not "
+    "For FALSE POSITIVES, set all three of these to an empty string \"\", do not "
     "fabricate an exploit for something that is not a real risk."
 )
 
