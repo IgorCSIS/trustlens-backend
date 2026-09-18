@@ -31,21 +31,89 @@ _CHAIN_IDS = {
     "sepolia": 11155111,
 }
 
+from .errors import TrustLensError
 
-class SourceNotVerified(Exception):
-    pass
+
+class SourceNotVerified(TrustLensError):
+    """
+    Raised when a contract's source is not published on the block explorer.
+
+    Not an internal failure: the caller asked about a contract whose source
+    nobody has verified, so 404 rather than 500.
+    """
+
+    @property
+    def http_status(self) -> int:
+        """
+        Get the HTTP status this error maps to.
+
+        Returns:
+            int: 404, since the requested source does not exist to analyze.
+        """
+        return 404
+
+    @property
+    def user_message(self) -> str:
+        """
+        Get the caller-facing message.
+
+        Returns:
+            str: The detail, or a default explanation when none was given.
+        """
+        return self.detail or "Contract source is not verified on the explorer."
 
 
 @dataclass
 class FetchedSource:
+    """
+    Everything needed to compile one fetched contract.
+
+    Attributes:
+        primary_file (str): Absolute path to the main contract .sol file.
+        root_dir (str): Directory that is the compilation root, used as
+            Slither's working directory.
+        solc_version (str): Compiler version to use, e.g. "0.8.24".
+        contract_name (str): Name of the contract as the explorer reports it.
+        remappings (list[str]): Import remappings needed to compile.
+    """
+
     primary_file: str            # abs path to the main contract .sol
     root_dir: str                # dir that is the compilation root (slither cwd)
     solc_version: str            # e.g. "0.8.24"
     contract_name: str
     remappings: list[str] = field(default_factory=list)
 
+    def __str__(self) -> str:
+        """
+        Return a readable representation of the fetched source.
+
+        The dataclass repr would print every field including the full paths;
+        this keeps a log line to the contract and how it will be compiled.
+
+        Returns:
+            str: Contract name, solc version, and remapping count.
+        """
+        return (
+            f"FetchedSource(contract={self.contract_name}, "
+            f"solc={self.solc_version}, remappings={len(self.remappings)})"
+        )
+
 
 def _parse_solc_version(compiler_version: str, source: str) -> str:
+    """
+    Work out which solc version to compile with.
+
+    Prefers the version the explorer reports, falls back to the pragma in the
+    source, and finally to a recent default so a missing version does not
+    stop the scan outright.
+
+    Parameters:
+        compiler_version (str): Version string from the explorer, may be empty.
+        source (str): Contract source, read for its pragma if needed.
+
+    Returns:
+        str: A concrete version such as "0.8.24".
+    """
     m = re.search(r"(\d+\.\d+\.\d+)", compiler_version or "")
     if m:
         return m.group(1)
@@ -54,6 +122,22 @@ def _parse_solc_version(compiler_version: str, source: str) -> str:
 
 
 def fetch_sources(address: str, api_key: str, chain: str = "base-sepolia") -> FetchedSource:
+    """
+    Fetch a verified contract's source from the block explorer and write it to
+    a temporary directory ready for compilation.
+
+    Parameters:
+        address (str): Contract address to fetch.
+        api_key (str): Explorer API key.
+        chain (str): Chain identifier, e.g. "base-sepolia".
+
+    Returns:
+        FetchedSource: Paths and compiler settings for the fetched contract.
+
+    Raises:
+        ValueError: If chain is not a chain this service knows.
+        SourceNotVerified: If the explorer has no verified source for address.
+    """
     chain_id = _CHAIN_IDS.get(chain)
     if chain_id is None:
         raise ValueError(f"Unsupported chain '{chain}'. Known: {list(_CHAIN_IDS)}")
@@ -156,10 +240,33 @@ def _pick_primary(files: list[str], contract_name: str) -> str:
 
 
 def _write_file(root: str, rel_path: str, content: str) -> str:
+    """
+    Write one source file under root, refusing to escape that directory.
+
+    The path comes from the block explorer, which is relaying whatever the
+    contract author put in their source map, so it is untrusted input.
+
+    The containment check compares against root plus a separator. Comparing
+    against the bare prefix, as this did before, accepts a sibling directory
+    whose name merely starts with root: from root /tmp/ab the relative path
+    ../abc/evil.sol normalizes to /tmp/abc/evil.sol, which passes a plain
+    startswith and lands outside root. Anything that fails the check is
+    written under its basename inside root instead of being rejected, so a
+    hostile path degrades to a flat filename rather than failing the scan.
+
+    Parameters:
+        root (str): Directory the file must stay within.
+        rel_path (str): Explorer-supplied relative path, untrusted.
+        content (str): File contents to write.
+
+    Returns:
+        str: Absolute path the file was written to, always inside root.
+    """
     rel_path = rel_path.replace("\\", "/").lstrip("/")
-    safe = os.path.normpath(os.path.join(root, rel_path))
-    if not safe.startswith(os.path.normpath(root)):
-        safe = os.path.join(root, os.path.basename(rel_path))
+    root_norm = os.path.normpath(root)
+    safe = os.path.normpath(os.path.join(root_norm, rel_path))
+    if safe != root_norm and not safe.startswith(root_norm + os.sep):
+        safe = os.path.join(root_norm, os.path.basename(rel_path))
     os.makedirs(os.path.dirname(safe), exist_ok=True)
     with open(safe, "w", encoding="utf-8") as fh:
         fh.write(content)

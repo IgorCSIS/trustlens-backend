@@ -16,9 +16,8 @@ from __future__ import annotations
 
 import os
 import shutil
-import threading
 import time
-from collections import defaultdict
+from typing import Any, Callable, Final
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -30,6 +29,7 @@ from .ai import AIReport
 from .models import (
     AddressScanRequest, Finding, LocalScanRequest, ProxyInfo, ReportRequest, ScanResult,
 )
+from .state import DailySpendBudget, RateLimiter, TtlCache
 
 load_dotenv()
 
@@ -56,113 +56,183 @@ else:
 FREE_BETA = os.getenv("FREE_BETA", "1") == "1"
 
 
-# --- Simple per-IP rate limiters --------------------------------------------
-def _make_limiter(max_n: int, window: int, msg: str):
-    hits: dict[str, list[float]] = defaultdict(list)
+# --- Per-IP rate limiters ---------------------------------------------------
+# The limiter itself lives in app/state.py; this layer only turns a refusal
+# into the HTTP response, so the limiting logic stays testable without FastAPI.
+def _limiter_dependency(limiter: RateLimiter) -> Callable[[Request], None]:
+    """
+    Adapt a RateLimiter into a FastAPI dependency.
 
-    def dep(request: Request) -> None:
+    Parameters:
+        limiter (RateLimiter): The limiter to enforce.
+
+    Returns:
+        Callable[[Request], None]: Dependency that raises HTTP 429 when the
+            caller is over the limit and returns None otherwise.
+    """
+
+    def dependency(request: Request) -> None:
+        """
+        Enforce the limiter for one request.
+
+        Parameters:
+            request (Request): The incoming request, used for the client IP.
+
+        Returns:
+            None: This function does not return anything.
+
+        Raises:
+            HTTPException: 429 when the caller has exceeded the limit.
+        """
         ip = request.client.host if request.client else "unknown"
-        now = time.time()
-        hits[ip] = [t for t in hits[ip] if t > now - window]
-        if len(hits[ip]) >= max_n:
-            raise HTTPException(status_code=429, detail=msg)
-        hits[ip].append(now)
+        if not limiter.check(ip):
+            raise HTTPException(status_code=429, detail=limiter.message)
 
-    return dep
+    return dependency
 
 
 # free scan: protect the CPU-heavy endpoint (per minute)
-rate_limit = _make_limiter(
-    int(os.getenv("SCAN_RATE_MAX", "20")), int(os.getenv("SCAN_RATE_WINDOW", "60")),
-    "Too many scans, give it a moment.",
+scan_limiter: Final[RateLimiter] = RateLimiter(
+    max_hits=int(os.getenv("SCAN_RATE_MAX", "20")),
+    window_seconds=int(os.getenv("SCAN_RATE_WINDOW", "60")),
+    message="Too many scans, give it a moment.",
 )
 # AI report: daily per-IP cap so free-beta spend can't run away
-ai_rate_limit = _make_limiter(
-    int(os.getenv("AI_RATE_MAX", "8")), int(os.getenv("AI_RATE_WINDOW", "86400")),
-    "You've hit today's free deep-report limit. Try again tomorrow, or scan away for free.",
+ai_limiter: Final[RateLimiter] = RateLimiter(
+    max_hits=int(os.getenv("AI_RATE_MAX", "8")),
+    window_seconds=int(os.getenv("AI_RATE_WINDOW", "86400")),
+    message=(
+        "You've hit today's free deep-report limit. "
+        "Try again tomorrow, or scan away for free."
+    ),
 )
+rate_limit = _limiter_dependency(scan_limiter)
+ai_rate_limit = _limiter_dependency(ai_limiter)
 
 
-# --- Result cache -----------------------------------------------------------
+# --- Result caches ----------------------------------------------------------
 # Scans are effectively deterministic for a given verified source, so cache by
 # (chain, address): cuts Claude spend, kills repeat-scan latency, relieves the
 # Basescan key, and lets a viral spike hit the cache instead of the model.
-# In-process TTL cache; swap for Redis once there's more than one instance.
-_CACHE_TTL = int(os.getenv("CACHE_TTL", "86400"))  # 24h; verified source rarely changes
+# In-process; swap for Redis once there's more than one instance.
+_CACHE_TTL: Final[int] = int(os.getenv("CACHE_TTL", "86400"))  # 24h
 # Proxies can be upgraded, which swaps the implementation without changing the
-# address (the cache key). A shorter TTL bounds how long we might serve a verdict
-# about code the admin has already replaced.
-_PROXY_CACHE_TTL = int(os.getenv("PROXY_CACHE_TTL", "3600"))  # 1h
-_scan_cache: dict[str, tuple[float, ScanResult]] = {}
-_report_cache: dict[str, tuple[float, "DeepReport"]] = {}
-_cache_lock = threading.Lock()
+# address (the cache key). A shorter TTL bounds how long we might serve a
+# verdict about code the admin has already replaced.
+_PROXY_CACHE_TTL: Final[int] = int(os.getenv("PROXY_CACHE_TTL", "3600"))  # 1h
 
 
-def _cache_key(address: str, chain: str) -> str:
-    return f"{chain.lower()}:{address.lower()}"
+def _proxy_aware_ttl(value: ScanResult | "DeepReport") -> int:
+    """
+    Choose the lifetime for one cached entry.
 
+    Parameters:
+        value (ScanResult | DeepReport): The value being cached.
 
-def _effective_ttl(val) -> int:
-    scan = val.scan if isinstance(val, DeepReport) else val
+    Returns:
+        int: The shorter proxy TTL when the entry describes an upgradeable
+            proxy, otherwise the default TTL.
+    """
+    scan = value.scan if isinstance(value, DeepReport) else value
     if isinstance(scan, ScanResult) and scan.proxy and scan.proxy.is_proxy:
         return _PROXY_CACHE_TTL
     return _CACHE_TTL
 
 
-def _cache_get(store: dict, key: str):
-    with _cache_lock:
-        hit = store.get(key)
-        if hit is None:
-            return None
-        ts, val = hit
-        if time.time() - ts > _effective_ttl(val):
-            store.pop(key, None)
-            return None
-        return val
+scan_cache: Final[TtlCache] = TtlCache(default_ttl=_CACHE_TTL, ttl_policy=_proxy_aware_ttl)
+report_cache: Final[TtlCache] = TtlCache(default_ttl=_CACHE_TTL, ttl_policy=_proxy_aware_ttl)
 
 
-def _cache_put(store: dict, key: str, val) -> None:
-    with _cache_lock:
-        store[key] = (time.time(), val)
+def _cache_key(address: str, chain: str) -> str:
+    """
+    Build the cache key for a contract on a chain.
+
+    Both parts are lower-cased so the same contract does not occupy several
+    entries under different address casings.
+
+    Parameters:
+        address (str): Contract address.
+        chain (str): Chain identifier, e.g. "base".
+
+    Returns:
+        str: Key in the form "chain:address", both lower-cased.
+    """
+    return f"{chain.lower()}:{address.lower()}"
 
 
 # --- Global AI spend cap (fails closed) -------------------------------------
 # The per-IP limiter is bypassable by rotating IPs, so it is not a real ceiling
-# on Claude spend. This global daily counter is: once the day's budget is spent,
-# we stop calling the model instead of running up the bill. Reserved before the
-# call and refunded if the call fails, so errors don't burn budget.
-_AI_GLOBAL_DAILY_MAX = int(os.getenv("AI_GLOBAL_DAILY_MAX", "200"))
-_ai_spend_lock = threading.Lock()
-_ai_spend = {"day": "", "count": 0}
+# on Claude spend. This global daily counter is: once the day's budget is
+# spent, we stop calling the model instead of running up the bill. Reserved
+# before the call and refunded if the call fails, so errors don't burn budget.
+_AI_GLOBAL_DAILY_MAX: Final[int] = int(os.getenv("AI_GLOBAL_DAILY_MAX", "200"))
+ai_budget: Final[DailySpendBudget] = DailySpendBudget(daily_max=_AI_GLOBAL_DAILY_MAX)
 
 
 def _ai_budget_reserve() -> None:
-    today = time.strftime("%Y-%m-%d", time.gmtime())
-    with _ai_spend_lock:
-        if _ai_spend["day"] != today:
-            _ai_spend["day"], _ai_spend["count"] = today, 0
-        if _ai_spend["count"] >= _AI_GLOBAL_DAILY_MAX:
-            raise HTTPException(
-                status_code=503,
-                detail="TrustLens has hit today's free-beta deep-report capacity. "
-                "Try again tomorrow, or keep using the free scan.",
-            )
-        _ai_spend["count"] += 1
+    """
+    Claim one paid model call against the global daily budget.
+
+    Returns:
+        None: This function does not return anything.
+
+    Raises:
+        HTTPException: 503 when the day's capacity is exhausted.
+    """
+    if not ai_budget.reserve():
+        raise HTTPException(
+            status_code=503,
+            detail="TrustLens has hit today's free-beta deep-report capacity. "
+            "Try again tomorrow, or keep using the free scan.",
+        )
 
 
 def _ai_budget_refund() -> None:
-    with _ai_spend_lock:
-        if _ai_spend["count"] > 0:
-            _ai_spend["count"] -= 1
+    """
+    Return one reserved call to the global daily budget.
+
+    Returns:
+        None: This function does not return anything.
+    """
+    ai_budget.refund()
 
 
 class DeepReport(BaseModel):
+    """
+    A paid deep report: the raw scan plus the model's triage of it.
+
+    Attributes:
+        scan (ScanResult): The static-analysis result the triage was based on.
+        report (AIReport): The model's triage and explanation of that scan.
+    """
+
     scan: ScanResult
     report: AIReport
 
+    def __str__(self) -> str:
+        """
+        Return a readable representation of the report.
+
+        Returns:
+            str: The scanned target with both the raw and adjusted verdicts.
+        """
+        return (
+            f"DeepReport(target={self.scan.target}, "
+            f"scan_verdict={self.scan.verdict}, ai_verdict={self.report.verdict})"
+        )
+
 
 @app.get("/")
-def root() -> dict:
+def root() -> dict[str, object]:
+    """
+    Describe the service at the root path.
+
+    Exists so someone who opens the base URL in a browser gets an orientation
+    message instead of a 404.
+
+    Returns:
+        dict[str, object]: Service name, status, and where to go next.
+    """
     return {
         "name": "TrustLens API",
         "status": "ok",
@@ -172,7 +242,13 @@ def root() -> dict:
 
 
 @app.get("/health")
-def health() -> dict:
+def health() -> dict[str, object]:
+    """
+    Report liveness for uptime checks.
+
+    Returns:
+        dict[str, object]: Status plus the analysis engine and model in use.
+    """
     return {"status": "ok", "engine": "slither", "ai_model": ai.MODEL}
 
 
@@ -193,12 +269,12 @@ def scan_local(req: LocalScanRequest) -> ScanResult:
 def scan_address(req: AddressScanRequest) -> ScanResult:
     """FREE tier — rule-based findings only, no payment, no AI cost."""
     key = _cache_key(req.address, req.chain)
-    cached = _cache_get(_scan_cache, key)
+    cached = scan_cache.get(key)
     if cached is not None:
         return cached
     scan, _ = _scan_address_core(req.address, req.chain)
     if _cacheable(scan):
-        _cache_put(_scan_cache, key, scan)
+        scan_cache.put(key, scan)
     return scan
 
 
@@ -223,7 +299,7 @@ def report_address(req: ReportRequest) -> DeepReport:
 
     # Payment/pass is verified above per caller; the cache only saves the compute.
     key = _cache_key(req.address, req.chain)
-    cached = _cache_get(_report_cache, key)
+    cached = report_cache.get(key)
     if cached is not None:
         return cached
 
@@ -249,8 +325,8 @@ def report_address(req: ReportRequest) -> DeepReport:
             raise
 
     if _cacheable(scan):
-        _cache_put(_report_cache, key, report)
-        _cache_put(_scan_cache, key, scan)  # warm the free-scan cache too
+        report_cache.put(key, report)
+        scan_cache.put(key, scan)  # warm the free-scan cache too
     return report
 
 
@@ -271,6 +347,19 @@ def report_local(req: LocalScanRequest) -> DeepReport:
 # --------------------------------------------------------------------------
 
 def _proxy_admin_phrase(info: ProxyInfo) -> str:
+    """
+    Describe who controls upgrades, for inclusion in a report's prose.
+
+    Who holds upgrade rights is often the most important fact about a proxy:
+    a single key can replace audited code with anything at any time.
+
+    Parameters:
+        info (ProxyInfo): Resolved proxy details.
+
+    Returns:
+        str: A sentence naming the admin and what it is, or an empty string
+            when no admin could be read.
+    """
     if info.admin is None:
         return ""
     who = "a contract (likely a multisig or timelock, verify its signers)" \
@@ -426,6 +515,20 @@ def _scan_address_core(address: str, chain: str) -> tuple[ScanResult, str]:
 
 
 def _triage(scan: ScanResult, source: str) -> AIReport:
+    """
+    Run the model triage over a scan, as an HTTP error on failure.
+
+    Parameters:
+        scan (ScanResult): The static-analysis result to triage.
+        source (str): Contract source the scan was produced from.
+
+    Returns:
+        AIReport: The model's triage of the findings.
+
+    Raises:
+        HTTPException: 500 if no API key is configured, or if the model call
+            fails.
+    """
     if not os.getenv("ANTHROPIC_API_KEY"):
         raise HTTPException(
             status_code=500,

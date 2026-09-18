@@ -55,12 +55,54 @@ _PASS_MAX_AGE = 600  # seconds
 _DB = os.path.join(os.path.dirname(__file__), "..", "payments.db")
 _lock = threading.Lock()
 
+from .errors import TrustLensError
 
-class PaymentError(Exception):
-    """Raised when a payment can't be verified or was already used."""
+
+class PaymentError(TrustLensError):
+    """
+    Raised when a payment cannot be verified or was already used.
+
+    The caller supplied proof that did not check out, so this is a 402:
+    the request is well-formed but payment is still outstanding.
+    """
+
+    @property
+    def http_status(self) -> int:
+        """
+        Get the HTTP status this error maps to.
+
+        Returns:
+            int: 402, payment required.
+        """
+        return 402
+
+    @property
+    def user_message(self) -> str:
+        """
+        Get the caller-facing message.
+
+        Returns:
+            str: The detail, or a default explanation when none was given.
+        """
+        return self.detail or "Payment could not be verified."
 
 
 def _w3(chain: str) -> Web3:
+    """
+    Get a Web3 client for a chain, as a payment-layer error on failure.
+
+    Wraps the RPC layer's UnsupportedChain in PaymentError so a caller
+    verifying a payment sees one error type rather than two.
+
+    Parameters:
+        chain (str): Chain identifier.
+
+    Returns:
+        Web3: Connected client for the chain.
+
+    Raises:
+        PaymentError: If the chain has no configured RPC endpoint.
+    """
     try:
         return rpc.w3(chain)
     except rpc.UnsupportedChain as exc:

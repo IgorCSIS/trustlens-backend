@@ -55,6 +55,18 @@ def _ensure_solc(version: str) -> None:
 
 
 def _score(summary: dict[str, int]) -> tuple[int, str]:
+    """
+    Turn a count of findings by impact into a risk score and a verdict label.
+
+    The score is capped at 100 so a contract with very many low-impact
+    findings cannot outrank one with a genuinely severe issue.
+
+    Parameters:
+        summary (dict[str, int]): Finding counts keyed by impact label.
+
+    Returns:
+        tuple[int, str]: The 0-100 score and its verdict label.
+    """
     raw = sum(_IMPACT_WEIGHT.get(k, 0) * v for k, v in summary.items())
     score = min(raw, 100)
     if score >= 40:
@@ -68,7 +80,17 @@ def _score(summary: dict[str, int]) -> tuple[int, str]:
     return score, verdict
 
 
-def _normalize(raw: dict, target: str) -> ScanResult:
+def _normalize(raw: dict[str, object], target: str) -> ScanResult:
+    """
+    Convert Slither's JSON output into a ScanResult.
+
+    Parameters:
+        raw (dict[str, object]): Parsed Slither JSON.
+        target (str): Address or filename that was scanned, for the result.
+
+    Returns:
+        ScanResult: Normalized findings, summary counts, score, and verdict.
+    """
     detectors = (raw.get("results") or {}).get("detectors") or []
     findings: list[Finding] = []
     summary: dict[str, int] = {}
