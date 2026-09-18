@@ -14,13 +14,53 @@ RPCS = {
     "base": "https://mainnet.base.org",
 }
 
+from .errors import TrustLensError
 
-class UnsupportedChain(Exception):
-    """Raised when a chain has no configured RPC endpoint."""
+
+class UnsupportedChain(TrustLensError):
+    """
+    Raised when a chain has no configured RPC endpoint.
+
+    The caller named a chain this deployment does not serve, so this is a
+    400: the request itself is wrong, not the service.
+    """
+
+    @property
+    def http_status(self) -> int:
+        """
+        Get the HTTP status this error maps to.
+
+        Returns:
+            int: 400, bad request.
+        """
+        return 400
+
+    @property
+    def user_message(self) -> str:
+        """
+        Get the caller-facing message.
+
+        Returns:
+            str: The detail, or a default explanation when none was given.
+        """
+        return self.detail or "That chain is not supported."
 
 
 def w3(chain: str, timeout: int = 20) -> Web3:
-    rpc = RPCS.get(chain)
-    if not rpc:
+    """
+    Build a Web3 client for a chain.
+
+    Parameters:
+        chain (str): Chain identifier, e.g. "base".
+        timeout (int): Request timeout in seconds.
+
+    Returns:
+        Web3: Client pointed at that chain's configured RPC endpoint.
+
+    Raises:
+        UnsupportedChain: If the chain has no configured endpoint.
+    """
+    endpoint = RPCS.get(chain)
+    if not endpoint:
         raise UnsupportedChain(f"unsupported chain '{chain}'")
-    return Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": timeout}))
+    return Web3(Web3.HTTPProvider(endpoint, request_kwargs={"timeout": timeout}))

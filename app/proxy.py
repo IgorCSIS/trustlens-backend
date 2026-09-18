@@ -45,10 +45,35 @@ def _addr_from_word(word: bytes) -> str | None:
 
 
 def _read_addr_slot(w3: Web3, address: str, slot: int) -> str | None:
+    """
+    Read one storage slot and interpret it as an address.
+
+    Parameters:
+        w3 (Web3): Connected client for the target chain.
+        address (str): Contract whose storage is read.
+        slot (int): Storage slot number.
+
+    Returns:
+        str | None: The address held in the slot, or None if the slot is empty.
+    """
     return _addr_from_word(w3.eth.get_storage_at(address, slot))
 
 
 def _has_code(w3: Web3, address: str) -> bool:
+    """
+    Report whether an address has contract code deployed at it.
+
+    Used to tell a contract admin (multisig or timelock) from a plain
+    externally owned account. An unreadable query is treated as "no", which
+    is the cautious answer: it never upgrades the report's confidence.
+
+    Parameters:
+        w3 (Web3): Connected client for the target chain.
+        address (str): Address to check.
+
+    Returns:
+        bool: True if code is deployed at address, False otherwise or on error.
+    """
     try:
         return len(bytes(w3.eth.get_code(Web3.to_checksum_address(address)))) > 0
     except Exception:  # noqa: BLE001 - treat an unreadable code query as "unknown/no"
@@ -56,6 +81,17 @@ def _has_code(w3: Web3, address: str) -> bool:
 
 
 def _beacon_impl(w3: Web3, beacon: str) -> str | None:
+    """
+    Ask a beacon contract which implementation it currently points at.
+
+    Parameters:
+        w3 (Web3): Connected client for the target chain.
+        beacon (str): Beacon contract address.
+
+    Returns:
+        str | None: The implementation address, or None if the call reverted
+            or the address is not a beacon.
+    """
     try:
         res = w3.eth.call({"to": Web3.to_checksum_address(beacon), "data": _IMPL_SELECTOR})
     except Exception:  # noqa: BLE001 - beacon.implementation() reverted / not a beacon

@@ -71,6 +71,26 @@ _SYSTEM = (
 
 
 class TriagedFinding(BaseModel):
+    """
+    One scanner finding after the model has assessed it.
+
+    The scanner reports what matched a pattern; this adds whether it actually
+    matters for this contract, and what to do about it.
+
+    Attributes:
+        check (str): Slither detector id this maps to.
+        original_impact (str): Slither's own impact label.
+        verdict (str): critical | worth-fixing | minor | false-positive.
+        explanation (str): Plain-English reason it matters, or does not.
+        recommendation (str): One concrete action, or 'no action needed'.
+        exploit_sketch (str): Concrete attack or failure scenario. Empty for
+            false positives.
+        vulnerable_snippet (str): The offending Solidity. Empty for false
+            positives.
+        fixed_snippet (str): Drop-in corrected replacement. Empty for false
+            positives.
+    """
+
     check: str = Field(..., description="Slither detector id this maps to")
     original_impact: str = Field(..., description="Slither's impact label")
     verdict: str = Field(
@@ -92,8 +112,32 @@ class TriagedFinding(BaseModel):
         description="REAL findings: drop-in corrected replacement code. Empty '' for false positives.",
     )
 
+    def __str__(self) -> str:
+        """
+        Return a readable representation of the triaged finding.
+
+        Returns:
+            str: The detector id with the verdict the model reached.
+        """
+        return f"TriagedFinding({self.check}, verdict={self.verdict})"
+
 
 class AIReport(BaseModel):
+    """
+    The model's assessment of a whole scan.
+
+    Attributes:
+        headline (str): One-sentence bottom line. Reports what was found and
+            never states a guarantee of safety.
+        adjusted_risk (int): Human-calibrated risk from 0 to 100.
+        verdict (str): SAFE-ISH | CAUTION | RISKY | DANGEROUS. SAFE-ISH means
+            low concern with caveats, never a guarantee.
+        limitations (list[str]): What this analysis did not or could not
+            check. Mandatory, 3 to 6 items.
+        triaged (list[TriagedFinding]): Per-finding assessments.
+        disclaimer (str): Scope and not-an-audit notice, set server-side.
+    """
+
     headline: str = Field(..., description="one-sentence bottom line; reports what was found, never a guarantee of safety")
     adjusted_risk: int = Field(..., ge=0, le=100, description="human-calibrated 0..100 risk")
     verdict: str = Field(..., description="SAFE-ISH | CAUTION | RISKY | DANGEROUS (SAFE-ISH = low concern with caveats, never a guarantee)")
@@ -103,6 +147,18 @@ class AIReport(BaseModel):
     )
     triaged: list[TriagedFinding] = Field(default_factory=list)
     disclaimer: str = Field(default="", description="set server-side; scope + not-an-audit notice")
+
+    def __str__(self) -> str:
+        """
+        Return a readable representation of the report.
+
+        Returns:
+            str: Verdict, adjusted risk, and how many findings were triaged.
+        """
+        return (
+            f"AIReport(verdict={self.verdict}, adjusted_risk={self.adjusted_risk}, "
+            f"triaged={len(self.triaged)})"
+        )
 
 
 def triage(scan: ScanResult, source: str, max_source_chars: int = 24_000) -> AIReport:
