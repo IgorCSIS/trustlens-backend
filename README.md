@@ -1,6 +1,7 @@
 # TrustLens Backend: proxy-aware contract scanning with Slither and AI triage
 
 <p align="center">
+  <a href="https://github.com/IgorCSIS/trustlens-backend/actions/workflows/test.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/IgorCSIS/trustlens-backend/test.yml?branch=main&label=pytest&labelColor=3E2230&color=FFD23F&style=flat-square" /></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&labelColor=3E2230" />
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-Slither_+_web3-009688?style=flat-square&labelColor=3E2230" />
   <img alt="AI triage" src="https://img.shields.io/badge/AI-Claude_triage-FF4B5C?style=flat-square&labelColor=3E2230" />
@@ -17,12 +18,24 @@ The differentiator is the last step. Raw scanners stop at the findings and cry
 wolf. TrustLens reads the code and does the triage.
 
 ### Part of TrustLens · the first tool in the [SafuLens](https://x.com/SafuLens) suite
-- **[Live app](https://trustlens-web.niftyai.workers.dev)** try it, no wallet or signup
-- **[Frontend](https://github.com/IgorCSIS/trustlens-web)** React + wagmi/viem
-- **Backend** (this repo), FastAPI + Slither + web3 + Claude
-- **[Contracts](https://github.com/IgorCSIS/trustlens-contracts)** Foundry `PaymentGate`
+- **[Live app](https://trustlens-web.niftyai.workers.dev)**: try it, no wallet or signup
+- **[Frontend](https://github.com/IgorCSIS/trustlens-web)**: React with wagmi and viem
+- **Backend** (this repo): FastAPI, Slither, web3 and the AI triage pass
+- **[Contracts](https://github.com/IgorCSIS/trustlens-contracts)**: Foundry, `PaymentGate`
+- **[Keepwarm](https://github.com/IgorCSIS/trustlens-keepwarm)**: one cron, so the free tier never sleeps
 
 ---
+
+## Where this sits
+
+<p align="center">
+  <img src=".github/assets/repos.svg" alt="The four TrustLens repositories. trustlens-web posts scan and report requests to trustlens-backend, which reads Base and an AI triage API. trustlens-keepwarm requests the backend health endpoint every ten minutes. trustlens-contracts holds PaymentGate on Base Sepolia, and both payment arrows are dashed because they are switched off while the scanner is in free beta." width="880">
+</p>
+
+This repository is the middle box. Everything solid runs today. The two
+dashed arrows are the payment path: `app/payments.py` knows how to verify a
+`ScanPurchased` receipt and consume its payment id, and `FREE_BETA` keeps that
+whole branch switched off while the scanner is free.
 
 ## What it does, end to end
 

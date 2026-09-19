@@ -3,7 +3,7 @@
 The backend is a Docker container (FastAPI + Slither + web3 + Claude). Any host
 that runs a Dockerfile works: **Render**, **Railway**, and **Fly.io** are the
 easiest. It needs outbound internet (Basescan, Base RPC, Anthropic) and about
-512MB–1GB RAM (Slither is CPU/memory heavy).
+512MB to 1GB RAM (Slither is CPU/memory heavy).
 
 ## Environment variables (set these on the host)
 
@@ -13,7 +13,7 @@ easiest. It needs outbound internet (Basescan, Base RPC, Anthropic) and about
 | `BASESCAN_API_KEY` | yes | fetch verified source (Etherscan V2 key, works for Base mainnet) |
 | `ALLOWED_ORIGINS` | yes (prod) | your frontend origin, e.g. `https://trustlens.vercel.app` (comma-separated for several) |
 | `FREE_BETA` | no | `1` (default) = AI reports free + rate-limited. Set `0` to require on-chain payment. |
-| `AI_RATE_MAX` | no | free AI reports per IP per window (default 8) — your Claude-spend cap |
+| `AI_RATE_MAX` | no | free AI reports per IP per window (default 8). The model-spend cap |
 | `AI_RATE_WINDOW` | no | AI report window seconds (default 86400 = 1 day) |
 | `SCAN_RATE_MAX` | no | free scans per IP per window (default 20) |
 | `SCAN_RATE_WINDOW` | no | scan window seconds (default 60) |

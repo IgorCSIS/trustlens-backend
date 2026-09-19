@@ -1,6 +1,11 @@
 fastapi
 uvicorn[standard]
 slither-analyzer
+# app/proxy.py, app/rpc.py and app/payments.py import these directly.
+# They arrive transitively through slither-analyzer today, which means a
+# slither release that drops web3 would take the backend down with it.
+web3
+eth-account
 solc-select
 requests
 python-dotenv

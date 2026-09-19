@@ -182,7 +182,7 @@ def verify_pass(address: str, message: str, signature: str, chain: str) -> dict:
     if recovered.lower() != address.lower():
         raise PaymentError("signature does not match the claimed address")
 
-    # freshness — the signed message must carry a recent `issued: <unix>`
+    # freshness: the signed message must carry a recent `issued: <unix>`
     m = re.search(r"issued:\s*(\d+)", message)
     if not m:
         raise PaymentError("missing issued timestamp in signed message")

@@ -1,0 +1,31 @@
+name: test
+
+# The test suite existed before this workflow did, which meant nothing ran it
+# between a change and a deploy. All 36 tests are offline by design, so this
+# is cheap and cannot go flaky on somebody else's RPC.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: {}
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Matches the Dockerfile that Render actually builds from.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Test
+        run: python -m pytest -q

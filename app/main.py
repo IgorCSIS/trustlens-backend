@@ -253,7 +253,7 @@ def health() -> dict[str, object]:
 
 
 # --------------------------------------------------------------------------
-# M2 — static analysis only (free tier)
+# M2: static analysis only (free tier)
 # --------------------------------------------------------------------------
 
 @app.post("/scan/local", response_model=ScanResult, dependencies=[Depends(rate_limit)])
@@ -267,7 +267,7 @@ def scan_local(req: LocalScanRequest) -> ScanResult:
 
 @app.post("/scan/address", response_model=ScanResult, dependencies=[Depends(rate_limit)])
 def scan_address(req: AddressScanRequest) -> ScanResult:
-    """FREE tier — rule-based findings only, no payment, no AI cost."""
+    """FREE tier. Rule-based findings only, no payment, no AI cost."""
     key = _cache_key(req.address, req.chain)
     cached = scan_cache.get(key)
     if cached is not None:
@@ -279,7 +279,7 @@ def scan_address(req: AddressScanRequest) -> ScanResult:
 
 
 # --------------------------------------------------------------------------
-# M2 + M3 — static analysis + AI triage (PAID "deep scan")
+# M2 + M3: static analysis plus AI triage (PAID "deep scan")
 # --------------------------------------------------------------------------
 
 @app.post("/report/address", response_model=DeepReport, dependencies=[Depends(ai_rate_limit)])
@@ -332,7 +332,7 @@ def report_address(req: ReportRequest) -> DeepReport:
 
 @app.post("/report/local", response_model=DeepReport)
 def report_local(req: LocalScanRequest) -> DeepReport:
-    """DEV-ONLY — ungated AI report on pasted source. Disable/remove in prod."""
+    """DEV-ONLY. Ungated AI report on pasted source. Disable or remove in prod."""
     if os.getenv("ALLOW_LOCAL_REPORT") != "1":
         raise HTTPException(status_code=403, detail="local report disabled (set ALLOW_LOCAL_REPORT=1 for dev)")
     try:

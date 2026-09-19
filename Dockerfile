@@ -1,4 +1,4 @@
-# TrustLens backend — FastAPI + Slither + web3 + Claude.
+# TrustLens backend: FastAPI, Slither, web3 and the AI triage pass.
 FROM python:3.13-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends git curl \
