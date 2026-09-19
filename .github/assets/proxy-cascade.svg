@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 470" width="1200" height="470" role="img" aria-label="Proxy resolution tries three storage slots in fallback order. For USDC the first two read empty and the legacy zeppelinos slot resolves to the real implementation.">
+  <title>Following the proxy to the real code</title>
+  <desc>Three slot checks in order: the EIP-1967 implementation slot, the EIP-1967 beacon slot, then the legacy zeppelinos slot. For USDC on Base the first two are empty and the third resolves, so the implementation is scanned instead of the proxy shell.</desc>
+
+  <defs>
+    <marker id="tl-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8A6472"/>
+    </marker>
+    <marker id="tl-hit" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#FFD23F"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="470" rx="16" fill="#2A1721"/>
+  <rect x="0.5" y="0.5" width="1199" height="469" rx="15.5" fill="none" stroke="#4A2B3A"/>
+
+  <text x="48" y="42" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="17" font-weight="700" fill="#FFF6E9">Three slots, tried in order. USDC only answers on the third.</text>
+  <text x="48" y="66" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#B79AA6">A scanner that only knows the EIP-1967 slot finds nothing here and analyses the proxy shell instead of the token.</text>
+
+  <g transform="translate(48 92)">
+    <rect width="250" height="68" rx="10" fill="#3E2230" stroke="#4A2B3A"/>
+    <text x="16" y="26" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#B79AA6" letter-spacing="0.06em">YOU PASTE</text>
+    <text x="16" y="48" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.5" fill="#FFF6E9">0x833589fC...bdA02913</text>
+    <text x="16" y="62" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#C6A6BC">USDC on Base, a FiatTokenProxy</text>
+  </g>
+
+  <path d="M298 126 H352" stroke="#8A6472" stroke-width="2" fill="none" marker-end="url(#tl-a)"/>
+
+  <g transform="translate(360 92)">
+    <rect width="356" height="68" rx="10" fill="#3E2230" stroke="#4A2B3A"/>
+    <text x="16" y="24" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#B79AA6">1. EIP-1967 implementation slot</text>
+    <text x="16" y="42" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" fill="#C6A6BC">0x360894a1...d382bbc</text>
+    <text x="16" y="60" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#FF6A80">empty for USDC, fall through</text>
+  </g>
+
+  <path d="M538 160 V186" stroke="#8A6472" stroke-width="2" fill="none" marker-end="url(#tl-a)"/>
+
+  <g transform="translate(360 194)">
+    <rect width="356" height="68" rx="10" fill="#3E2230" stroke="#4A2B3A"/>
+    <text x="16" y="24" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#B79AA6">2. EIP-1967 beacon slot</text>
+    <text x="16" y="42" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" fill="#C6A6BC">0xa3f0ad74...5133d50</text>
+    <text x="16" y="60" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#FF6A80">empty for USDC, fall through</text>
+  </g>
+
+  <path d="M538 262 V288" stroke="#8A6472" stroke-width="2" fill="none" marker-end="url(#tl-a)"/>
+
+  <g transform="translate(360 296)">
+    <rect width="356" height="68" rx="10" fill="#3E2230" stroke="#FFD23F" stroke-opacity="0.5"/>
+    <text x="16" y="24" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#FFD23F">3. legacy zeppelinos slot</text>
+    <text x="16" y="42" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" fill="#C6A6BC">0x7050c9e0...ed3f8c3</text>
+    <text x="16" y="60" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#FFD23F">resolves</text>
+  </g>
+
+  <path d="M716 330 H770" stroke="#FFD23F" stroke-width="2" fill="none" marker-end="url(#tl-hit)"/>
+
+  <g transform="translate(778 296)">
+    <rect width="374" height="68" rx="10" fill="#3E2230" stroke="#FFD23F" stroke-opacity="0.5"/>
+    <text x="16" y="24" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#B79AA6" letter-spacing="0.06em">SCANNED INSTEAD</text>
+    <text x="16" y="46" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.5" fill="#FFF6E9">0x2Ce6311d...D19FD779</text>
+    <text x="16" y="62" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#C6A6BC">the FiatToken logic, where the code actually is</text>
+  </g>
+
+  <rect x="778" y="92" width="374" height="170" rx="10" fill="#3E2230" stroke="#4A2B3A"/>
+  <text x="794" y="116" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#B79AA6" letter-spacing="0.06em">WHY THE THIRD ONE EXISTS</text>
+  <text x="794" y="140" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#FFF6E9">EIP-1967 slots are keccak(label) minus 1.</text>
+  <text x="794" y="158" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#FFF6E9">The legacy zeppelinos slots are the raw</text>
+  <text x="794" y="176" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#FFF6E9">keccak with no subtraction.</text>
+  <text x="794" y="204" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#B79AA6">Getting that difference wrong reintroduces</text>
+  <text x="794" y="222" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#B79AA6">the exact false negative this removes.</text>
+  <text x="794" y="248" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" fill="#C6A6BC">asserted on-chain by ProxyResolution.t.sol</text>
+
+  <rect x="48" y="394" width="1104" height="46" rx="9" fill="#3E2230" stroke="#4A2B3A"/>
+  <text x="66" y="414" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#FFF6E9">If the real implementation cannot be reached, no comforting number is returned.</text>
+  <text x="66" y="432" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#B79AA6">The scan degrades to COULD NOT ANALYZE at risk 55, an elevated unknown band, rather than reporting the shell as clean.</text>
+</svg>

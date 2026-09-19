@@ -1,4 +1,4 @@
-# TrustLens — Backend (Scanner Engine)
+# TrustLens Backend: proxy-aware contract scanning with Slither and AI triage
 
 <p align="center">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&labelColor=3E2230" />
@@ -17,10 +17,10 @@ The differentiator is the last step. Raw scanners stop at the findings and cry
 wolf. TrustLens reads the code and does the triage.
 
 ### Part of TrustLens · the first tool in the [SafuLens](https://x.com/SafuLens) suite
-- **[Live app](https://trustlens-web.niftyai.workers.dev)** — try it, no wallet or signup
-- **[Frontend](https://github.com/IgorCSIS/trustlens-web)** — React + wagmi/viem
-- **Backend** (this repo) — FastAPI + Slither + web3 + Claude
-- **[Contracts](https://github.com/IgorCSIS/trustlens-contracts)** — Foundry `PaymentGate`
+- **[Live app](https://trustlens-web.niftyai.workers.dev)** try it, no wallet or signup
+- **[Frontend](https://github.com/IgorCSIS/trustlens-web)** React + wagmi/viem
+- **Backend** (this repo), FastAPI + Slither + web3 + Claude
+- **[Contracts](https://github.com/IgorCSIS/trustlens-contracts)** Foundry `PaymentGate`
 
 ---
 
@@ -35,8 +35,24 @@ address ─▶ resolve proxy ─▶ fetch verified source ─▶ Slither ─▶ 
 ```
 
 Two tiers from one pipeline:
-- `POST /scan/address` — **free** rule-based scan (Slither findings + 0-100 risk score).
-- `POST /report/address` — **AI deep report**: triage of each flag, an attack example and a copy-paste fix for the real ones, and a human-calibrated score.
+- `POST /scan/address`, **free** rule-based scan (Slither findings + 0-100 risk score).
+- `POST /report/address`, **AI deep report**: triage of each flag, an attack example and a copy-paste fix for the real ones, and a human-calibrated score.
+
+## Why proxies break other scanners
+
+<p align="center">
+  <img src=".github/assets/proxy-cascade.svg" alt="Three storage slots tried in fallback order. For USDC on Base the EIP-1967 implementation and beacon slots both read empty and the legacy zeppelinos slot resolves, so the FiatToken implementation is scanned instead of the proxy shell." width="880">
+</p>
+
+Point a scanner at a proxy and it analyses the shell: a fallback function and
+an upgrade hook, with none of the logic anyone actually interacts with. USDC
+on Base is the case that proves it, because its EIP-1967 slot reads empty and
+only the legacy zeppelinos slot resolves. A scanner that knows one slot finds
+nothing and reports on the wrong contract.
+
+The fork test in `trustlens-contracts` pins these constants against live
+mainnet state, so the slots in the picture are asserted on-chain rather than
+copied from a spec.
 
 ## Engineering worth a look
 
@@ -85,8 +101,8 @@ with `TRUSTLENS_MODEL`). Slither auto-installs a matching `solc` via `solc-selec
 
 | Env | Default | What it does |
 |-----|---------|--------------|
-| `BASESCAN_API_KEY` | — | Etherscan V2 key for fetching verified source |
-| `ANTHROPIC_API_KEY` | — | Claude key for the AI report |
+| `BASESCAN_API_KEY` | none | Etherscan V2 key for fetching verified source |
+| `ANTHROPIC_API_KEY` | none | Claude key for the AI report |
 | `TRUSTLENS_MODEL` | `claude-sonnet-5` | Triage model |
 | `FREE_BETA` | `1` | AI report free + rate-limited; `0` requires on-chain payment |
 | `AI_GLOBAL_DAILY_MAX` | `200` | Global daily deep-report cap (fails closed) |
